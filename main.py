@@ -117,7 +117,7 @@ model.summary()
 evaluator = Evaluator()
 
 if __name__ == '__main__':
-    mode = 'test'
+    mode = 'train'
     if mode == 'train':
         model.fit(train_loader.forfit(), epochs=epochs, steps_per_epoch=len(train_loader), callbacks=[evaluator])
     else:
