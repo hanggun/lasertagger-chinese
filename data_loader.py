@@ -13,7 +13,7 @@ batch_size = 4
 label_map_file = 'data/csl_10k/label_map.txt'
 input_file = 'data/csl_10k/train.tsv'
 input_format = 'csl'
-dict_path = r'D:\PekingInfoResearch\pretrain_models\chinese_L-12_H-768_A-12/vocab.txt'
+dict_path = r'D:\PekingInfoResearch\pretrain_models\chinese_GAU-alpha-char_L-24_H-768/vocab.txt'
 
 label_map = utils.read_label_map(label_map_file)
 _id_2_tag = {tag_id: tagging.Tag(tag) for tag, tag_id in label_map.items()}
@@ -42,7 +42,7 @@ tokenizer = Tokenizer(dict_path, do_lower_case=True)
 
 class data_generator(DataGenerator):
     def __iter__(self, random=False):
-        cur_ids, cur_seg, cur_label, cur_mask = [], [], [], []
+        cur_ids, cur_seg, cur_label = [], [], []
         for is_end, d in self.sample(random):
             if not d[2]:
                 continue
@@ -51,19 +51,16 @@ class data_generator(DataGenerator):
 
             input_ids = tokenizer.tokens_to_ids(['[CLS]']+d[0][0].split()[:max_len-2]+['[SEP]'])
             segment_ids = [0] * len(input_ids)
-            attention_mask = [1] * len(input_ids)
             cur_ids.append(input_ids)
             cur_seg.append(segment_ids)
             cur_label.append(labels)
-            cur_mask.append(attention_mask)
             if len(cur_ids) == self.batch_size or is_end:
                 cur_ids = sequence_padding(cur_ids)
                 cur_seg = sequence_padding(cur_seg)
                 cur_label = sequence_padding(cur_label)
-                cur_mask = sequence_padding(cur_mask)
                 cur_label = np.expand_dims(cur_label, -1)
                 yield [cur_ids, cur_seg], cur_label
-                cur_ids, cur_seg, cur_label, cur_mask = [], [], [], []
+                cur_ids, cur_seg, cur_label = [], [], []
 
 train_loader = data_generator(train_data, batch_size=batch_size)
 dev_loader = data_generator(dev_data, batch_size=batch_size)
