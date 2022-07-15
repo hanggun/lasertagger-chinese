@@ -1,12 +1,8 @@
-import json
 import numpy as np
-import os
 from bert4keras.backend import keras, K, batch_gather
-from bert4keras.backend import multilabel_categorical_crossentropy
-from bert4keras.layers import GlobalPointer, EfficientGlobalPointer, Dense, Dropout, Loss
+from bert4keras.layers import Dense, Dropout, Loss
 from bert4keras.models import build_transformer_model
-from bert4keras.optimizers import Adam, extend_with_gradient_accumulation
-
+from bert4keras.optimizers import Adam, extend_with_weight_decay
 from bert4keras.snippets import open, to_array
 from keras.models import Model
 from tqdm import tqdm
@@ -24,6 +20,7 @@ k_sparse = 10
 config_path = r'D:\PekingInfoResearch\pretrain_models\chinese_GAU-alpha-char_L-24_H-768/bert_config.json'
 checkpoint_path = r'D:\PekingInfoResearch\pretrain_models\chinese_GAU-alpha-char_L-24_H-768/bert_model.ckpt'
 dict_path = r'D:\PekingInfoResearch\pretrain_models\chinese_GAU-alpha-char_L-24_H-768/vocab.txt'
+save_path = r'saved_model/saved_model'
 
 
 class CrossEntropy(Loss):
@@ -35,7 +32,7 @@ class CrossEntropy(Loss):
         return seq2seq_loss
 
     def compute_seq2seq_loss(self, inputs, mask=None):
-        y_mask, y_true, y_pred = inputs
+        y_true, y_pred = inputs
         # 正loss
         pos_loss = batch_gather(y_pred, y_true)[..., 0] # 取正确位置上的值
         # 负loss
@@ -55,27 +52,32 @@ def my_metrics(y_t, y_p):
 
 def evaluate(data):
     total_metrics = {k: 0.0 for k in metric_keys}
+    predictions = []
+    targets = []
     for d in tqdm(data):
         source = d[0][0]
         target = d[1]
-        tag = d[2]
         labels = [label_map[str(tag)] for tag in d[2][:max_len - 2]]
         labels = [0] + labels + [0]
 
         input_ids = tokenizer.tokens_to_ids(['[CLS]'] + d[0][0].split()[:max_len - 2] + ['[SEP]'])
         segment_ids = [0] * len(input_ids)
-        attention_mask = [1] * len(input_ids)
 
-        input_ids, labels, segment_ids, attention_mask = to_array([input_ids]), to_array([labels]), to_array(segment_ids), to_array(attention_mask)
-        labels = np.expand_dims(labels, -1)
+        input_ids, labels, segment_ids = to_array([input_ids]), to_array([labels]), to_array([segment_ids])
         res = model.predict([input_ids, segment_ids])
-        res = K.argmax(res)
+        res = np.argmax(res, -1)
         for r in res:
-            tags = [_id_2_tag[x.numpy()] for x in r[1:-1]]
+            tags = [_id_2_tag[x] for x in r[1:-1]]
             pred_text = utils._realize_sequence(source.split(), tags)
             metrics = compute_metrics(pred_text.split(), target.split())
+            predictions.append(pred_text)
+            targets.append(target)
             for k, v in metrics.items():
                 total_metrics[k] += v
+    for i in np.random.randint(0, len(predictions), 2):
+        print(f"Target    : {targets[i]}")
+        print(f"Prediction: {predictions[i]}")
+        print("-" * 100)
     return {k: v / len(data) for k, v in total_metrics.items()}
 
 
@@ -89,7 +91,8 @@ class Evaluator(keras.callbacks.Callback):
         metrics = evaluate(dev_data)
         if metrics['main'] >= self.best_metric:  # 保存最优
             self.best_metric = metrics['main']
-            model.save_weights('saved_model')
+            if mode == 'train':
+                model.save_weights(save_path)
         metrics['best'] = self.best_metric
         print(metrics)
 
@@ -97,8 +100,7 @@ model = build_transformer_model(config_path, checkpoint_path, model=GAU_alpha)
 output = Dropout(0.1)(model.output)
 output = Dense(len(label_map))(output)
 # y_true = keras.Input(shape=(None, 1))
-# y_mask = keras.Input(shape=(None,))
-# output = [y_mask, y_true, output]
+# output = [y_true, output]
 # output = CrossEntropy()(output)
 # model = Model(model.input + [y_true, y_mask], output[2])
 model = Model(model.input, output)
@@ -106,11 +108,10 @@ model = Model(model.input, output)
 # model.add_metric(acc, name='acc')
 model.summary()
 
-
-AdamG = extend_with_gradient_accumulation(Adam, name='AdamG')
+Adamw = extend_with_weight_decay(Adam)
 model.compile(
     loss=keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-    optimizer=Adam(learning_rate=learning_rate),
+    optimizer=Adamw(learning_rate=learning_rate),
     metrics=[keras.metrics.SparseCategoricalAccuracy()],
 )
 model.summary()
@@ -121,5 +122,5 @@ if __name__ == '__main__':
     if mode == 'train':
         model.fit(train_loader.forfit(), epochs=epochs, steps_per_epoch=len(train_loader), callbacks=[evaluator])
     else:
-        model.load_weights('saved_model')
+        model.load_weights(save_path)
         evaluator.on_epoch_end(0)
